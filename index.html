@@ -61,11 +61,12 @@ main{max-width:1280px;margin:0 auto;padding:24px max(4vw,16px) 56px}
 @media(max-width:860px){.aloc{grid-template-columns:minmax(0,1fr)}}
 .busca{width:100%;min-height:44px;padding:8px 10px;border:1px solid #b9c2b7;border-radius:0;font-size:16px;margin-bottom:10px}
 .conj{display:grid;gap:8px;max-height:360px;overflow-y:auto;padding-right:4px}
-.conj button{text-align:left;border:1px solid var(--linha);background:#fff;padding:10px 14px;cursor:pointer;border-radius:0;display:grid;gap:2px;min-height:44px}
+.conj{gap:4px}
+.conj button{text-align:left;border:1px solid var(--linha);background:#fff;padding:8px 12px;cursor:pointer;border-radius:0;display:flex;flex-wrap:wrap;gap:2px 14px;align-items:baseline;min-height:44px}
 .conj button:hover{border-color:var(--verde)}
 .conj button[aria-pressed=true]{border:2px solid var(--verde);background:#eef6eb}
 .conj b{font-size:15px;color:var(--cinza)}
-.conj span{font-size:13px;color:#6b726a}
+.conj span{font-size:14px;color:#6b726a}
 .conj .nada{font-size:14px;padding:12px;background:var(--fundo)}
 .filtro{display:flex;flex-wrap:wrap;gap:14px;align-items:flex-end;margin-bottom:16px}
 .filtro div{width:190px}
@@ -131,7 +132,7 @@ label.chk input{width:22px;height:22px;accent-color:var(--verde)}
     <div class="resumo" id="resumo"></div>
     <div class="aloc">
       <div>
-        <label for="busca" style="display:block;font-size:13px;font-weight:700;margin-bottom:4px">Conjuntos já usados na planilha</label>
+        <label for="busca" style="display:block;font-size:13px;font-weight:700;margin-bottom:4px">Conjuntos da planilha (aba Conjuntos e pedidos)</label>
         <input class="busca" id="busca" type="search" placeholder="Buscar por motorista ou placa">
         <div class="conj" id="conj"><div class="nada">Anexe a planilha para ver os conjuntos.</div></div>
       </div>
@@ -141,7 +142,7 @@ label.chk input{width:22px;height:22px;accent-color:var(--verde)}
           <div><label for="cavalo">Placa cavalo</label><input id="cavalo" placeholder="ABC1D23"></div>
           <div><label for="carreta">Placa carreta</label><input id="carreta" placeholder="ABC1D23 / ABC1D24"></div>
         </form>
-        <p class="info">Escolha um conjunto da lista ou digite um novo. Pode deixar em branco e alocar depois na planilha.</p>
+        <p class="info">Escolha um conjunto da lista ou digite um novo. Conjunto novo entra sozinho na aba Conjuntos ao gravar. Pode deixar em branco e alocar depois.</p>
         <div class="acoes" style="margin-top:8px"><button class="btn" id="bLimpar" type="button">Deixar sem conjunto</button></div>
       </div>
     </div>
@@ -160,7 +161,6 @@ label.chk input{width:22px;height:22px;accent-color:var(--verde)}
       <div><label for="fFim">até</label><input id="fFim" type="date"></div>
       <div class="opts">
         <label class="chk"><input type="checkbox" id="oCli">Mostrar cliente</label>
-        <label class="chk"><input type="checkbox" id="oVal">Mostrar valor do frete</label>
       </div>
     </div>
     <div class="vazio" id="vazio">Anexe a planilha para montar o quadro.</div>
@@ -365,6 +365,14 @@ const COLS = [
   { k: 'cavalo', h: 'Placa cavalo', re: /CAVALO/ },
   { k: 'carreta', h: 'Placa carreta', re: /CARRETA/ }
 ];
+// Aba Conjuntos (motorista + cavalo + carreta)
+const CCOLS = [
+  { k: 'motorista', h: 'Motorista', re: /MOTORISTA/ },
+  { k: 'cavalo', h: 'Placa cavalo', re: /CAVALO/ },
+  { k: 'carreta', h: 'Placa carreta', re: /CARRETA/ },
+  { k: 'perfil', h: 'Perfil veículo', re: /PERFIL/ }
+];
+const ABA_CONJ = 'Conjuntos';
 const FMT = { dt: 'dd/mm/yyyy hh:mm', num: '#,##0.0', brl: '"R$" #,##0.00' };
 const BASE_NOME = 'Controle_Pedidos_Novelis';
 const norm = s => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -438,14 +446,14 @@ if (location.hash === '#teste') (async () => {
 })();
 
 /* ---------- 1. Planilha (sempre por upload) ---------- */
-function mapear(ws) {
+function mapear(ws, cols = COLS) {
   const r = XLSX.utils.decode_range(ws['!ref'] || 'A1:A1');
   const map = {};
   for (let c = r.s.c; c <= r.e.c; c++) {
     const cell = ws[XLSX.utils.encode_cell({ r: r.s.r, c })];
     if (!cell) continue;
     const h = norm(cell.v);
-    const col = COLS.find(x => !(x.k in map) && x.re.test(h));
+    const col = cols.find(x => !(x.k in map) && x.re.test(h));
     if (col) map[col.k] = c;
   }
   return { map, hr: r.s.r };
@@ -466,6 +474,21 @@ function lerEstado() {
   const r = XLSX.utils.decode_range(st.ws['!ref']);
   let ult = hr;
   const conj = new Map();
+  // 1º: conjuntos cadastrados na aba Conjuntos
+  const cm = mapear(st.wsC, CCOLS);
+  if (['motorista', 'cavalo', 'carreta'].some(k => !(k in cm.map))) throw new Error('A aba "Conjuntos" precisa das colunas Motorista, Placa cavalo e Placa carreta.');
+  st.mapC = cm.map; st.hrC = cm.hr;
+  const rc = XLSX.utils.decode_range(st.wsC['!ref'] || 'A1:A1');
+  st.ultC = cm.hr;
+  for (let row = cm.hr + 1; row <= rc.e.r; row++) {
+    const gc = k => k in cm.map ? String(st.wsC[XLSX.utils.encode_cell({ r: row, c: cm.map[k] })]?.v ?? '').trim() : '';
+    const mot = gc('motorista').toUpperCase().replace(/\s+/g, ' '), cav = placa(gc('cavalo')), car = placa(gc('carreta'));
+    if (!mot && !cav && !car) continue;
+    st.ultC = row;
+    const chave = norm(mot) + '|' + norm(cav) + '|' + norm(car);
+    if (!conj.has(chave)) conj.set(chave, { motorista: mot, cavalo: cav, carreta: car, perfil: gc('perfil').toUpperCase(), naAba: true });
+  }
+  // 2º: conjuntos que aparecem nos pedidos
   for (let row = hr + 1; row <= r.e.r; row++) {
     const g = k => st.ws[XLSX.utils.encode_cell({ r: row, c: map[k] })];
     let cheia = false;
@@ -483,15 +506,13 @@ function lerEstado() {
     if (reg.idNum) st.ids.add(reg.idNum);
     if (reg.motorista) {
       const chave = norm(reg.motorista) + '|' + norm(reg.cavalo) + '|' + norm(reg.carreta);
-      const quando = reg.carregamento || reg.captacao;
-      const e = conj.get(chave) || { motorista: reg.motorista, cavalo: reg.cavalo, carreta: reg.carreta, n: 0, ultima: null, perfil: reg.perfil };
-      e.n++;
-      if (quando && (!e.ultima || quando > e.ultima)) { e.ultima = quando; e.perfil = reg.perfil || e.perfil; }
+      const e = conj.get(chave) || { motorista: reg.motorista, cavalo: reg.cavalo, carreta: reg.carreta, perfil: '', naAba: false };
+      if (!e.naAba && reg.perfil) e.perfil = reg.perfil;
       conj.set(chave, e);
     }
   }
   st.ult = ult; st.linhas = st.registros.length;
-  st.conjuntos = [...conj.values()].sort((a, b) => (b.ultima?.getTime() ?? 0) - (a.ultima?.getTime() ?? 0));
+  st.conjuntos = [...conj.values()].sort((a, b) => a.motorista.localeCompare(b.motorista, 'pt-BR') || a.cavalo.localeCompare(b.cavalo));
 }
 function nomeBase(n) { return n.replace(/\.[^.]+$/, '').replace(/[_ ]\d{4}-\d{2}-\d{2}_\d{2}h\d{2}$/, '') || BASE_NOME; }
 function mostrarPlanilha() {
@@ -502,10 +523,19 @@ async function abrirPlanilha(file) {
   try {
     const buf = await file.arrayBuffer();
     const wb = XLSX.read(buf, { type: 'array', cellStyles: true, cellDates: false });
-    const aba = wb.SheetNames.find(n => norm(n) === 'PEDIDOS') || wb.SheetNames[0];
+    const abaC = wb.SheetNames.find(n => norm(n) === 'CONJUNTOS');
+    const aba = wb.SheetNames.find(n => norm(n) === 'PEDIDOS') || wb.SheetNames.find(n => n !== abaC);
+    if (!aba) throw new Error('Não encontrei a aba Pedidos na planilha.');
     st.wb = wb; st.ws = wb.Sheets[aba]; st.nome = file.name;
+    if (abaC) { st.wsC = wb.Sheets[abaC]; st.criouC = false; }
+    else {
+      // Planilha antiga, sem a aba: cria agora; ela é preenchida com os conjuntos dos pedidos ao gravar
+      st.wsC = XLSX.utils.aoa_to_sheet([CCOLS.map(c => c.h)]);
+      st.wsC['!cols'] = [34, 14, 24, 18].map(w => ({ wch: w }));
+      XLSX.utils.book_append_sheet(wb, st.wsC, ABA_CONJ); st.criouC = true;
+    }
     lerEstado(); st.gravado = null; mostrarPlanilha(); periodoPadrao();
-  } catch (e) { st.wb = null; st.ws = null; st.registros = []; st.conjuntos = []; msg($('iXls'), e.message || 'Não consegui abrir esse arquivo.', 'err'); }
+  } catch (e) { st.wb = null; st.ws = null; st.wsC = null; st.registros = []; st.conjuntos = []; msg($('iXls'), e.message || 'Não consegui abrir esse arquivo.', 'err'); }
   listarConjuntos(); validar();
 }
 $('fXls').addEventListener('change', e => { if (e.target.files[0]) abrirPlanilha(e.target.files[0]); e.target.value = ''; });
@@ -680,9 +710,8 @@ function listarConjuntos() {
     const sel = norm(c.motorista) === norm(atual.motorista) && norm(c.cavalo) === norm(atual.cavalo) && norm(c.carreta) === norm(atual.carreta);
     b.setAttribute('aria-pressed', sel);
     const n = document.createElement('b'); n.textContent = c.motorista;
-    const p = document.createElement('span'); p.textContent = `Cavalo ${c.cavalo || '-'} · Carreta ${c.carreta || '-'}`;
-    const u = document.createElement('span'); u.textContent = `${c.perfil ? c.perfil + ' · ' : ''}${c.n} ${c.n === 1 ? 'carga' : 'cargas'}${c.ultima ? ' · última em ' + diaCurto(c.ultima) : ''}`;
-    b.append(n, p, u);
+    const p = document.createElement('span'); p.textContent = [c.cavalo, c.carreta, c.perfil].filter(Boolean).join(' · ');
+    b.append(n, p);
     b.addEventListener('click', () => { $('motorista').value = c.motorista; $('cavalo').value = c.cavalo; $('carreta').value = c.carreta; listarConjuntos(); validar(); });
     el.appendChild(b);
   }
@@ -736,8 +765,50 @@ function gravarLinha(d) {
   r.e.r = Math.max(r.e.r, row); r.e.c = Math.max(r.e.c, ...Object.values(st.map));
   st.ws['!ref'] = XLSX.utils.encode_range(r);
   if (st.ws['!autofilter']) st.ws['!autofilter'].ref = XLSX.utils.encode_range({ s: { r: st.hr, c: r.s.c }, e: { r: row, c: r.e.c } });
-  st.gravado = d.idNum;
+  st.gravado = d.idNum; st.ult = row;
+  ordenarLinhas(st.ws, st.hr, cel => valorData(cel[st.map.carregamento])?.getTime() ?? Infinity);
+  gravarConjunto(d);
   lerEstado();
+}
+// Reescreve as linhas de dados de uma aba na ordem dada (leva a linha inteira, inclusive colunas extras)
+function ordenarLinhas(ws, hr, chave, texto) {
+  const r = XLSX.utils.decode_range(ws['!ref']);
+  const linhas = [];
+  for (let row = hr + 1; row <= r.e.r; row++) {
+    const cel = {}; let cheia = false;
+    for (let c = r.s.c; c <= r.e.c; c++) {
+      const a = XLSX.utils.encode_cell({ r: row, c });
+      if (ws[a]) { cel[c] = ws[a]; if (ws[a].v != null && ws[a].v !== '') cheia = true; delete ws[a]; }
+    }
+    if (cheia) linhas.push(cel);
+  }
+  linhas.sort((a, b) => { const x = chave(a), y = chave(b); return texto ? String(x).localeCompare(String(y), 'pt-BR') : x - y; });
+  linhas.forEach((cel, i) => { for (const c in cel) ws[XLSX.utils.encode_cell({ r: hr + 1 + i, c: +c })] = cel[c]; });
+  r.e.r = hr + Math.max(linhas.length, 1);
+  ws['!ref'] = XLSX.utils.encode_range(r);
+  if (ws['!autofilter']) ws['!autofilter'].ref = XLSX.utils.encode_range({ s: { r: hr, c: r.s.c }, e: { r: hr + linhas.length, c: r.e.c } });
+}
+// Inclui na aba Conjuntos o conjunto novo (e, numa planilha antiga, todos os conjuntos dos pedidos)
+function gravarConjunto(d) {
+  const novos = [];
+  const chave = c => norm(c.motorista) + '|' + norm(c.cavalo) + '|' + norm(c.carreta);
+  const naAba = new Set(st.conjuntos.filter(c => c.naAba).map(chave));
+  if (st.criouC) for (const c of st.conjuntos) if (!naAba.has(chave(c))) { novos.push(c); naAba.add(chave(c)); }
+  if (d.motorista && !naAba.has(chave(d))) novos.push({ motorista: d.motorista, cavalo: d.cavalo, carreta: d.carreta, perfil: d.perfil });
+  if (!novos.length) return;
+  let row = st.ultC;
+  for (const c of novos) {
+    row++;
+    for (const col of CCOLS) {
+      if (!(col.k in st.mapC) || !c[col.k]) continue;
+      st.wsC[XLSX.utils.encode_cell({ r: row, c: st.mapC[col.k] })] = { t: 's', v: String(c[col.k]) };
+    }
+  }
+  const r = XLSX.utils.decode_range(st.wsC['!ref'] || 'A1:D1');
+  r.e.r = Math.max(r.e.r, row); r.e.c = Math.max(r.e.c, ...Object.values(st.mapC));
+  st.wsC['!ref'] = XLSX.utils.encode_range(r);
+  st.ultC = row; st.criouC = false;
+  ordenarLinhas(st.wsC, st.hrC, cel => String(cel[st.mapC.motorista]?.v ?? ''), true);
 }
 const NO_CLAUDE = !!window.claude;
 async function baixar(nome, data) {
@@ -794,7 +865,7 @@ function incluirNoPeriodo(d) {
   if (fim && d > fim) $('fFim').value = toDia(d);
 }
 periodoPadrao();
-['fIni', 'fFim', 'oCli', 'oVal'].forEach(id => $(id).addEventListener('change', validar));
+['fIni', 'fFim', 'oCli'].forEach(id => $(id).addEventListener('change', validar));
 
 const logo = new Image(); logo.src = document.querySelector('.top img').src; logo.onload = () => validar();
 if (document.fonts) document.fonts.load('700 40px Questrial').then(() => validar()).catch(() => {});
@@ -838,7 +909,7 @@ function desenhar() {
     { h: 'CARRETA', w: 125, v: r => r.carreta ? r.carreta.split(' / ').map(p => [p, 'n']) : [] }
   ];
   if ($('oCli').checked) cols.push({ h: 'CLIENTE', w: 230, v: r => [[r.cliente || '', 'n']] });
-  if ($('oVal').checked) cols.push({ h: 'FRETE', w: 155, v: r => [[r.valor != null ? 'R$ ' + brl(r.valor) : '', 'n']] });
+  cols.push({ h: 'FRETE', w: 150, v: r => [[r.valor != null ? 'R$ ' + brl(r.valor) : '', 'n']] });
   const soma = cols.reduce((a, c) => a + c.w, 0);
   let x = M; for (const c of cols) { c.x = x; c.w = c.w * LW / soma; x += c.w; }
 
@@ -930,7 +1001,7 @@ $('bCopTxt').addEventListener('click', async () => {
     t.push(`${cidadeCurta(r.origem)} → ${cidadeCurta(r.destino)}${r.perfil ? ' · ' + r.perfil : ''}`);
     t.push(r.motorista ? `${r.motorista} · ${r.cavalo || '-'} / ${r.carreta || '-'}` : 'Conjunto: A ALOCAR');
     if ($('oCli').checked && r.cliente) t.push(`Cliente: ${r.cliente}`);
-    if ($('oVal').checked && r.valor != null) t.push(`Frete: R$ ${brl(r.valor)}`);
+    if (r.valor != null) t.push(`Frete: R$ ${brl(r.valor)}`);
     t.push('');
   }
   if (!linhas.length) t.push('Nenhuma carga no período.');
