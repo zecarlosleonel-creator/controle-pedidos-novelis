@@ -116,7 +116,6 @@ label.chk input{width:22px;height:22px;accent-color:var(--verde)}
     <form class="form" id="form" autocomplete="off">
       <div><label for="captacao">Data de captação</label><input id="captacao" type="datetime-local"></div>
       <div><label for="id">ID TMS</label><input id="id" inputmode="numeric" placeholder="#000000"><div class="dica" id="dId" hidden>Confira o número do ID.</div></div>
-      <div class="w2"><label for="cliente">Cliente</label><input id="cliente"></div>
       <div><label for="origem">Cidade origem</label><input id="origem" placeholder="CIDADE - UF"></div>
       <div><label for="destino">Cidade destino</label><input id="destino" placeholder="CIDADE - UF"></div>
       <div><label for="carregamento">Data de carregamento</label><input id="carregamento" type="datetime-local"></div>
@@ -159,9 +158,6 @@ label.chk input{width:22px;height:22px;accent-color:var(--verde)}
     <div class="filtro">
       <div><label for="fIni">Carregamento de</label><input id="fIni" type="date"></div>
       <div><label for="fFim">até</label><input id="fFim" type="date"></div>
-      <div class="opts">
-        <label class="chk"><input type="checkbox" id="oCli">Mostrar cliente</label>
-      </div>
     </div>
     <div class="vazio" id="vazio">Anexe a planilha para montar o quadro.</div>
     <canvas id="cv" width="1600" height="600" hidden></canvas>
@@ -372,7 +368,6 @@ const URLS = {
 const COLS = [
   { k: 'captacao', h: 'Data captação', re: /CAPTA/, t: 'dt' },
   { k: 'id', h: 'ID TMS', re: /^IDTMS$|^ID$|TMS/ },
-  { k: 'cliente', h: 'Cliente', re: /CLIENTE/ },
   { k: 'origem', h: 'Cidade origem', re: /ORIGEM/ },
   { k: 'destino', h: 'Cidade destino', re: /DESTINO/ },
   { k: 'carregamento', h: 'Data carregamento', re: /CARREGAM/, t: 'dt' },
@@ -516,7 +511,7 @@ function lerEstado() {
     const txt = k => String(g(k)?.v ?? '').trim();
     const reg = {
       linha: row, captacao: valorData(g('captacao')), id: txt('id'), idNum: txt('id').replace(/\D/g, ''),
-      cliente: txt('cliente'), origem: txt('origem'), destino: txt('destino'), carregamento: valorData(g('carregamento')),
+      origem: txt('origem'), destino: txt('destino'), carregamento: valorData(g('carregamento')),
       perfil: txt('perfil'), peso: num(g('peso')?.v), valor: num(g('valor')?.v),
       motorista: txt('motorista').toUpperCase().replace(/\s+/g, ' '), cavalo: placa(txt('cavalo')), carreta: placa(txt('carreta'))
     };
@@ -701,7 +696,6 @@ function preencher() {
   const c = st.cargas[st.sel] || {};
   $('captacao').value = toLocal(st.captura || new Date());
   $('id').value = c.id ? '#' + c.id : '';
-  $('cliente').value = c.cliente || '';
   $('origem').value = c.origem ? `${c.origem} - ${c.origemUF}` : '';
   $('destino').value = c.destino ? `${c.destino} - ${c.destinoUF}` : '';
   $('carregamento').value = toLocal(c.carregamento);
@@ -719,7 +713,7 @@ function dados() {
   const id = $('id').value.replace(/\D/g, '');
   return {
     captacao: fromLocal($('captacao').value), id: id ? '#' + id : '', idNum: id,
-    cliente: $('cliente').value.trim().toUpperCase(), origem: $('origem').value.trim().toUpperCase(), destino: $('destino').value.trim().toUpperCase(),
+    origem: $('origem').value.trim().toUpperCase(), destino: $('destino').value.trim().toUpperCase(),
     carregamento: fromLocal($('carregamento').value), perfil: $('perfil').value.trim().toUpperCase(), peso: num($('peso').value), valor: num($('valor').value), km: st.km,
     motorista: $('motorista').value.trim().toUpperCase().replace(/\s+/g, ' '), cavalo: placa($('cavalo').value), carreta: placa($('carreta').value)
   };
@@ -899,7 +893,7 @@ function incluirNoPeriodo(d) {
   if (fim && d > fim) $('fFim').value = toDia(d);
 }
 periodoPadrao();
-['fIni', 'fFim', 'oCli'].forEach(id => $(id).addEventListener('change', validar));
+['fIni', 'fFim'].forEach(id => $(id).addEventListener('change', validar));
 
 const logo = new Image(); logo.src = document.querySelector('.top img').src; logo.onload = () => validar();
 if (document.fonts) document.fonts.load('700 40px Questrial').then(() => validar()).catch(() => {});
@@ -925,6 +919,8 @@ function linhasQuadro() {
   return lista.filter(r => r.carregamento && (!ini || r.carregamento >= ini) && (!fim || r.carregamento <= fim))
     .sort((a, b) => a.carregamento - b.carregamento);
 }
+// Carga importada sem horário fica com 00:00: nesse caso o quadro mostra só a data
+const hora = d => d && (d.getHours() || d.getMinutes()) ? pad(d.getHours()) + ':' + pad(d.getMinutes()) : '';
 function desenhar() {
   const cv = $('cv');
   const tem = !!st.ws || st.cargas.length > 0;
@@ -933,17 +929,16 @@ function desenhar() {
   if (!tem) return;
   const W = 1600, M = 48, LW = W - 2 * M;
   const cols = [
-    { h: 'DATA', w: 110, v: r => [[diaCurto(r.carregamento), 'data'], [pad(r.carregamento.getHours()) + ':' + pad(r.carregamento.getMinutes()), 'n']] },
-    { h: 'ID TMS', w: 130, v: r => [[r.id || '#...', 'id']] },
-    { h: 'ORIGEM', w: 205, v: r => [[cidadeCurta(r.origem) || '...', 'n']] },
-    { h: 'DESTINO', w: 205, v: r => [[cidadeCurta(r.destino) || '...', 'n']] },
-    { h: 'VEÍCULO', w: 175, v: r => [[r.perfil || '', 'n']] },
-    { h: 'MOTORISTA', w: 270, v: r => r.motorista ? [[r.motorista, 'n']] : [], tag: r => !r.motorista },
-    { h: 'CAVALO', w: 125, v: r => r.cavalo ? r.cavalo.split(' / ').map(p => [p, 'n']) : [] },
-    { h: 'CARRETA', w: 125, v: r => r.carreta ? r.carreta.split(' / ').map(p => [p, 'n']) : [] }
+    { h: 'DATA', w: 95, v: r => [[diaCurto(r.carregamento), 'data']].concat(hora(r.carregamento) ? [[hora(r.carregamento), 'n']] : []) },
+    { h: 'ID TMS', w: 118, v: r => r.id ? [[r.id, 'id']] : [] },
+    { h: 'ORIGEM', w: 225, v: r => [[cidadeCurta(r.origem) || '...', 'n']] },
+    { h: 'DESTINO', w: 225, v: r => [[cidadeCurta(r.destino) || '...', 'n']] },
+    { h: 'VEÍCULO', w: 150, v: r => [[r.perfil || '', 'n']] },
+    { h: 'MOTORISTA', w: 250, v: r => r.motorista ? [[r.motorista, 'n']] : [], tag: r => !r.motorista },
+    { h: 'CAVALO', w: 115, v: r => r.cavalo ? r.cavalo.split(' / ').map(p => [p, 'n']) : [] },
+    { h: 'CARRETA', w: 120, v: r => r.carreta ? r.carreta.split(' / ').map(p => [p, 'n']) : [] }
   ];
-  if ($('oCli').checked) cols.push({ h: 'CLIENTE', w: 230, v: r => [[r.cliente || '', 'n']] });
-  cols.push({ h: 'FRETE', w: 150, v: r => [[r.valor != null ? 'R$ ' + brl(r.valor) : '', 'n']] });
+  cols.push({ h: 'FRETE', w: 170, v: r => [[r.valor != null ? 'R$\u00a0' + brl(r.valor) : '', 'n']] });
   const soma = cols.reduce((a, c) => a + c.w, 0);
   let x = M; for (const c of cols) { c.x = x; c.w = c.w * LW / soma; x += c.w; }
 
@@ -1031,10 +1026,9 @@ $('bCopTxt').addEventListener('click', async () => {
   const ini = fromDia($('fIni').value), fim = fromDia($('fFim').value);
   const t = ['*CONTROLE PEDIDOS NOVELIS*', ini && fim ? `Carregamentos de ${diaCurto(ini)} a ${diaCurto(fim)}` : '', ''];
   for (const r of linhas) {
-    t.push(`*${diaCurto(r.carregamento)} ${pad(r.carregamento.getHours())}:${pad(r.carregamento.getMinutes())}* ${r.id}${r.nova ? ' (NOVA)' : ''}`);
+    t.push(`*${diaCurto(r.carregamento)}${hora(r.carregamento) ? ' ' + hora(r.carregamento) : ''}*${r.id ? ' ' + r.id : ''}${r.nova ? ' (NOVA)' : ''}`);
     t.push(`${cidadeCurta(r.origem)} → ${cidadeCurta(r.destino)}${r.perfil ? ' · ' + r.perfil : ''}`);
     t.push(r.motorista ? `${r.motorista} · ${r.cavalo || '-'} / ${r.carreta || '-'}` : 'Conjunto: A ALOCAR');
-    if ($('oCli').checked && r.cliente) t.push(`Cliente: ${r.cliente}`);
     if (r.valor != null) t.push(`Frete: R$ ${brl(r.valor)}`);
     t.push('');
   }
