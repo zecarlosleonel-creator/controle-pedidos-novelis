@@ -236,7 +236,7 @@ label.chk input{width:22px;height:22px;accent-color:var(--verde)}
   }
 
   function dataCarga(seg, agora) {
-    const m = seg.match(/Carrega\w*\s+(\d{1,2})\s*de\s*([a-zç]{3})\w*\.?,?\s*(?:[àa]s\s*)?(\d{1,2})[:h.](\d{2})/i);
+    const m = seg.match(/Carrega\w*\s+(\d{1,2})\s*de\s*([a-zç]{3})\w*\.?,?\s*(?:[àa]s\s*)?(\d{1,2})\s*[:h.]?\s*(\d{2})(?!\d)/i);
     if (m) {
       const mes = MESES[m[2].toLowerCase()];
       if (mes == null) return null;
@@ -256,6 +256,11 @@ label.chk input{width:22px;height:22px;accent-color:var(--verde)}
 
   // Corrige trocas típicas do OCR dentro de números: b/ó→6, O/o/Q→0, l/I/|→1
   function limparOCR(t) {
+    const dig = x => x.replace(/[bó]/g, '6').replace(/[OoQ]/g, '0').replace(/[lI|]/g, '1');
+    // Horário lido só com letras ("lo:oo" = 10:00)
+    t = t.replace(/(^|[\s,.])([0-9OoQlI|]{1,2})\s?:\s?([0-9OoQlI|]{2})(?![0-9A-Za-z])/g, (m, a, h, mi) => a + dig(h) + ':' + dig(mi));
+    // Horário do "Carrega" sem os dois-pontos ("nov, lo 00")
+    t = t.replace(/(Carrega\w*\s+\S{1,2}\s*de\s*[a-zç]{3}\w*\.?,?\s*)([0-9OoQlI|]{1,2})\s+([0-9OoQlI|]{2})(?![0-9A-Za-z])/gi, (m, a, h, mi) => a + dig(h) + ':' + dig(mi));
     return t.replace(/[0-9bóOoQlI|.,:]+/g, m => /\d/.test(m) ? m.replace(/[bó]/g, '6').replace(/[OoQ]/g, '0').replace(/[lI|]/g, '1') : m);
   }
 
@@ -295,8 +300,21 @@ label.chk input{width:22px;height:22px;accent-color:var(--verde)}
 
     c.carregamento = dataCarga(seg, agora);
 
-    // Veículo, peso e distância
+    // Veículo, peso e distância: "PERFIL · 27 t · 131 km" (o OCR troca "t" por "|" e some com separadores)
     for (const l of linhas) {
+      const k = l.match(/(\d[\d.]*)\s*km\b/i);
+      if (!k || /Carrega|R\s*[\$S]/i.test(l)) continue;
+      const antes = l.slice(0, k.index).replace(/[\s·•:\-–—.,_]+$/, '');
+      const w = antes.match(/(\d+(?:[.,]\d+)?)\s*(?:t|\|)?$/);
+      if (!w) continue;
+      let peso = +w[1].replace(',', '.');
+      if (peso > 80 && /1$/.test(w[1])) peso = +w[1].slice(0, -1).replace(',', '.');   // "27|" lido como "271"
+      const perfil = limpa(antes.slice(0, w.index)).replace(/[\s·•:\-–—.,_|]+$/, '').toUpperCase().replace(/([A-Z])\(/g, '$1 (');
+      if (!/[A-Z]{3}/.test(perfil)) continue;
+      c.perfil = perfil; c.peso = peso; c.km = +k[1].replace(/\./g, '');
+      break;
+    }
+    for (const l of c.perfil ? [] : linhas) {
       const m = l.match(/^(.*?)\s*[·•:\-–—.,]?\s*(\d+(?:[.,]\d+)?)\s*t\b\s*[·•:\-–—.,]?\s*(?:(\d[\d.]*)\s*[Kk][Mm])?/);
       if (m && m[1] && /[A-Z]{3}/.test(m[1]) && !/Carrega|R\s*\$/i.test(l)) {
         c.perfil = limpa(m[1]).replace(/\s*[·•:\-–—.,]+$/, '').toUpperCase().replace(/([A-Z])\(/g, '$1 (');
@@ -563,6 +581,7 @@ function binarizar(img, limiar, maxPx) {
 // Junta várias leituras: em cada campo vence o valor que mais se repete
 function votar(listas) {
   const n = Math.max(...listas.map(l => l.length));
+  listas = listas.filter(l => l.length === n);   // leitura que achou menos cargas não entra na votação
   const campos = ['id', 'cliente', 'origem', 'origemUF', 'destino', 'destinoUF', 'carregamento', 'perfil', 'peso', 'km', 'valor'];
   return Array.from({ length: n }, (_, i) => {
     const cs = listas.map(l => l[i]).filter(Boolean), out = { avisos: [] };
@@ -604,7 +623,21 @@ async function lerClaude(file, agora) {
   const r = await comPrazo(st.sample('Transcreva todo o texto visível neste print de tela, linha por linha, na ordem em que aparece, mantendo "#", "R$", datas e o formato "CIDADE - UF". Responda só com o texto.', { images: [file], modelTier: 'quick' }), 60000);
   return RadarParse.parse(r.text || '', agora, st.cidades);
 }
-const completo = l => l.length && l[0].id && l[0].origem && l[0].destino && l[0].valor != null;
+const CAMPOS = ['id', 'origem', 'destino', 'carregamento', 'perfil', 'peso', 'valor'];
+const vazio = v => v == null || v === '';
+const completo = l => l.length > 0 && l.every(c => CAMPOS.every(k => !vazio(c[k])));
+const pontos = l => l.reduce((a, c) => a + CAMPOS.filter(k => !vazio(c[k])).length, 0);
+// Completa os campos vazios de uma leitura com os de outra (mesma carga pela posição ou pelo ID)
+function juntar(base, extra) {
+  if (!base) return extra;
+  return base.map((c, i) => {
+    const o = extra.find(e => e.id && e.id === c.id) || (extra.length === base.length ? extra[i] : null);
+    if (!o) return c;
+    const r = { ...c, avisos: [...new Set([...(c.avisos || []), ...(o.avisos || [])])] };
+    for (const k of [...CAMPOS, 'cliente', 'origemUF', 'destinoUF', 'km']) if (vazio(r[k]) && !vazio(o[k])) r[k] = o[k];
+    return r;
+  });
+}
 async function abrirPrint(file) {
   if (!file || !/^image\//.test(file.type)) return;
   const url = URL.createObjectURL(file);
@@ -622,8 +655,9 @@ async function abrirPrint(file) {
       try {
         $('motor').textContent = 'Usando ' + nome;
         const r = await fn();
-        if (!cargas || (completo(r) && !completo(cargas))) { cargas = r; usado = nome; }
-        if (completo(r)) break;
+        if (!cargas || r.length > cargas.length) { cargas = juntar(r, cargas || []); usado = nome; }
+        else { const j = juntar(cargas, r); if (pontos(j) > pontos(cargas)) usado += ' + ' + nome; cargas = j; }
+        if (completo(cargas)) break;
       } catch (e) { /* tenta o próximo leitor */ }
     }
   } catch (e) {}
